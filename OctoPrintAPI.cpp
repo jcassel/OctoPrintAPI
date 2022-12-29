@@ -186,10 +186,12 @@ bool OctoprintApi::getOctoprintVersion() {
  * http://docs.octoprint.org/en/master/api/printer.html#retrieve-the-current-printer-state
  * Retrieves the current state of the printer.
  * Returns a 200 OK with a Full State Response in the body upon success.
+ * A well known alternate response is a 409 Conflict with a JSON formatted "error" at the root.
  * */
 bool OctoprintApi::getPrinterStatistics() {
+  bool isResponseUnexpected = false;
   String response = sendGetToOctoprint("/api/printer");  //recieve reply from OctoPrint
-
+	
   StaticJsonDocument<JSONDOCUMENT_SIZE> root;
   if (!deserializeJson(root, response)) {
     if (root.containsKey("state")) {
@@ -204,42 +206,81 @@ bool OctoprintApi::getPrinterStatistics() {
       printerStats.printerStateready         = root["state"]["flags"]["ready"];
       printerStats.printerStateresuming      = root["state"]["flags"]["resuming"];
       printerStats.printerStatesdReady       = root["state"]["flags"]["sdReady"];
-    }
+	  printerStats.printerStateCancelling  = root["state"]["flags"]["cancelling"];
+	  
+	  printerStats.printerBedAvailable   = false;
+	  printerStats.printerTool0Available = false;
+	  printerStats.printerTool1Available = false;
+	  if (root.containsKey("temperature")) { // shoudl also add SD Card status here.
+		if (root["temperature"].containsKey("bed")) {
+          printerStats.printerBedTempActual = root["temperature"]["bed"]["actual"];
+		  printerStats.printerBedTempTarget = root["temperature"]["bed"]["target"];
+		  printerStats.printerBedTempOffset = root["temperature"]["bed"]["offset"];
+		  printerStats.printerBedAvailable  = true;
+	    }
 
-    printerStats.printerBedAvailable   = false;
-    printerStats.printerTool0Available = false;
-    printerStats.printerTool1Available = false;
-    if (root.containsKey("temperature")) {
-      if (root["temperature"].containsKey("bed")) {
-        printerStats.printerBedTempActual = root["temperature"]["bed"]["actual"];
-        printerStats.printerBedTempTarget = root["temperature"]["bed"]["target"];
-        printerStats.printerBedTempOffset = root["temperature"]["bed"]["offset"];
-        printerStats.printerBedAvailable  = true;
-      }
+        if (root["temperature"].containsKey("tool0")) {
+          printerStats.printerTool0TempActual = root["temperature"]["tool0"]["actual"];
+          printerStats.printerTool0TempTarget = root["temperature"]["tool0"]["target"];
+          printerStats.printerTool0TempOffset = root["temperature"]["tool0"]["offset"];
+          printerStats.printerTool0Available  = true;
+        }
 
-      if (root["temperature"].containsKey("tool0")) {
-        printerStats.printerTool0TempActual = root["temperature"]["tool0"]["actual"];
-        printerStats.printerTool0TempTarget = root["temperature"]["tool0"]["target"];
-        printerStats.printerTool0TempOffset = root["temperature"]["tool0"]["offset"];
-        printerStats.printerTool0Available  = true;
-      }
-
-      if (root["temperature"].containsKey("tool1")) {
-        printerStats.printerTool1TempActual = root["temperature"]["tool1"]["actual"];
-        printerStats.printerTool1TempTarget = root["temperature"]["tool1"]["target"];
-        printerStats.printerTool1TempOffset = root["temperature"]["tool1"]["offset"];
-        printerStats.printerTool1Available  = true;
-      }
-    }
-    return true;
-  } else {
-    printerStats.printerStateoperational = false;
-    if (response == "Printer is not operational") {
-      printerStats.printerState = response;
-      return true;
-    }
+        if (root["temperature"].containsKey("tool1")) {
+          printerStats.printerTool1TempActual = root["temperature"]["tool1"]["actual"];
+          printerStats.printerTool1TempTarget = root["temperature"]["tool1"]["target"];
+          printerStats.printerTool1TempOffset = root["temperature"]["tool1"]["offset"];
+          printerStats.printerTool1Available  = true;
+        }
+	  }
+	  //this is a bit of an override... Having it here allows future where it maybe is not included in the State or a call is made and does not return state but only sd status.
+	  if(root.containsKey("sd")){printerStats.printerStatesdReady = root["sd"]["ready"];}
+	  
+      }else{ //if it parsed but does not contain the state, this is not exactly unexpected but will be treated as such. 
+		isResponseUnexpected = true;
+	  }
+    
+  }else{ //In this case it did not parse and therefor is completely unexpected. 
+	  isResponseUnexpected = true;
   }
-  return false;
+  
+  if(isResponseUnexpected){ //All values in the Stats Struct are no lonber good and should not be trusted. 
+
+	//seems approprate to set these to true. Given the state is really unknown/error at his time.
+	printerStats.printerStateclosedOrError = true; 
+	printerStats.printerStateerror         = true;
+	printerStats.printerStatefinishing     = false;
+	printerStats.printerStateoperational   = false;
+	printerStats.printerStatepaused        = false;
+	printerStats.printerStatepausing       = false;
+	printerStats.printerStatePrinting      = false;
+	printerStats.printerStateready         = false;
+	printerStats.printerStateresuming      = false;
+	printerStats.printerStatesdReady       = false;
+	printerStats.printerStateCancelling  = false;
+	
+	printerStats.printerBedTempActual = -999;
+	printerStats.printerBedTempTarget = -999;
+	printerStats.printerBedTempOffset = -999;
+	printerStats.printerBedAvailable  = false;
+	printerStats.printerTool0TempActual = -999;
+	printerStats.printerTool0TempTarget = -999;
+	printerStats.printerTool0TempOffset = -999;
+	printerStats.printerTool0Available  = false;
+	printerStats.printerTool1TempActual = -999;
+	printerStats.printerTool1TempTarget = -999;
+	printerStats.printerTool1TempOffset = -999;
+	printerStats.printerTool1Available  = false;
+	
+	if(root.containsKey("error")){ //at least we have a well known response message here for state text.
+		printerStats.printerState = (const char *)root["error"]; 
+		return true;
+	}else{//no idea what was returned. This is a very unlikely code path.
+		printerStats.printerState = "Unknown, see (httpErrorBody)";
+		return false;
+	}
+  }
+  return true;
 }
 
 /***** PRINT JOB OPPERATIONS *****/

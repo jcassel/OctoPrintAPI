@@ -32,6 +32,7 @@ struct printerStatistics {
   bool printerStateready;
   bool printerStateresuming;
   bool printerStatesdReady;
+  bool printerStateCancelling;
 
   float printerBedTempActual;
   float printerBedTempTarget;
